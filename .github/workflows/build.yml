@@ -4,25 +4,34 @@ on:
   workflow_dispatch:
     inputs:
       app_name:
-        description: 'Nome do aplicativo'
+        description: Nome do aplicativo
         required: true
-        default: 'Nacional Automacao Remote'
+        default: Nacional Automacao Remote
       server:
-        description: 'IP ou domínio do servidor'
+        description: IP ou domínio do servidor
         required: true
-        default: '72.60.254.113'
+        default: 72.60.254.113
       color_primary:
-        description: 'Cor principal (hex)'
+        description: Cor principal (hex)
         required: false
-        default: '#ee3520'
+        default: "#ee3520"
+
+permissions:
+  contents: write
 
 jobs:
   build-windows:
     runs-on: windows-latest
-    
+
+    env:
+      CARGO_TERM_COLOR: always
+      VCPKG_DEFAULT_TRIPLET: x64-windows-static
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -32,22 +41,27 @@ jobs:
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11
         with:
-          vcpkgGitCommitId: '2024.02.14'
+          # SHA completo, obrigatório
+          vcpkgGitCommitId: "89d9955631e018df4a7cfce8b01c9954d658a1d8"
 
       - name: Install dependencies via vcpkg
+        shell: pwsh
         run: |
-          vcpkg install libvpx:x64-windows-static libyuv:x64-windows-static opus:x64-windows-static aom:x64-windows-static
-        env:
-          VCPKG_DEFAULT_TRIPLET: x64-windows-static
+          vcpkg install `
+            libvpx:x64-windows-static `
+            libyuv:x64-windows-static `
+            opus:x64-windows-static `
+            aom:x64-windows-static
 
       - name: Clone RustDesk source
+        shell: bash
         run: |
           git clone --depth 1 --branch 1.2.7 https://github.com/rustdesk/rustdesk.git rustdesk-src
-        shell: bash
 
       - name: Apply customizations
         shell: bash
         run: |
+          set -e
           cd rustdesk-src
 
           APP_NAME="${{ github.event.inputs.app_name }}"
@@ -57,24 +71,27 @@ jobs:
           echo "Aplicando personalizações..."
           echo "Nome: $APP_NAME"
           echo "Servidor: $SERVER"
+          echo "Cor: $COLOR"
 
-          # Configurar servidor padrão
+          # Ajuste de servidor padrão
           if [ -f "libs/hbb_common/src/config.rs" ]; then
-            sed -i "s|\"rs-ny.rustdesk.com\"|\"$SERVER\"|g" libs/hbb_common/src/config.rs
-            sed -i "s|\"rs-sg.rustdesk.com\"|\"$SERVER\"|g" libs/hbb_common/src/config.rs
-            sed -i "s|\"rs-cn.rustdesk.com\"|\"$SERVER\"|g" libs/hbb_common/src/config.rs
+            sed -i "s|rs-ny.rustdesk.com|$SERVER|g" libs/hbb_common/src/config.rs || true
+            sed -i "s|rs-sg.rustdesk.com|$SERVER|g" libs/hbb_common/src/config.rs || true
+            sed -i "s|rs-cn.rustdesk.com|$SERVER|g" libs/hbb_common/src/config.rs || true
             echo "Servidor configurado ✓"
+          else
+            echo "Arquivo de configuração não encontrado."
           fi
 
-          # Aplicar logo customizada se existir
+          # Logo customizada
           if [ -f "../assets/logo.png" ]; then
-            cp "../assets/logo.png" res/icon.png 2>/dev/null || true
+            cp "../assets/logo.png" res/icon.png || true
             echo "Logo aplicada ✓"
           fi
 
-          # Aplicar ícone customizado se existir
+          # Ícone customizado
           if [ -f "../assets/icon.ico" ]; then
-            cp "../assets/icon.ico" res/icon.ico 2>/dev/null || true
+            cp "../assets/icon.ico" res/icon.ico || true
             echo "Ícone aplicado ✓"
           fi
 
@@ -83,19 +100,31 @@ jobs:
       - name: Build RustDesk for Windows
         shell: bash
         run: |
+          set -e
           cd rustdesk-src
-          export VCPKG_ROOT="${VCPKG_ROOT}"
-          cargo build --release --target x86_64-pc-windows-msvc 2>&1
-        env:
-          VCPKG_ROOT: ${{ env.VCPKG_ROOT }}
 
-      - name: Rename output
+          echo "VCPKG_ROOT=$VCPKG_ROOT"
+          export VCPKG_ROOT="$VCPKG_ROOT"
+
+          cargo build --release --target x86_64-pc-windows-msvc
+
+      - name: Prepare output
         shell: bash
         run: |
-          APP_SAFE=$(echo "${{ github.event.inputs.app_name }}" | tr ' ' '_' | tr '[:upper:]' '[:lower:]')
+          set -e
+
+          APP_SAFE=$(echo "${{ github.event.inputs.app_name }}" | tr '[:upper:]' '[:lower:]' | tr ' ' '_' | tr -cd 'a-z0-9_-')
           mkdir -p output
-          cp rustdesk-src/target/x86_64-pc-windows-msvc/release/rustdesk.exe "output/${APP_SAFE}_setup.exe" 2>/dev/null || \
-          cp rustdesk-src/target/release/rustdesk.exe "output/${APP_SAFE}_setup.exe" 2>/dev/null || true
+
+          if [ -f "rustdesk-src/target/x86_64-pc-windows-msvc/release/rustdesk.exe" ]; then
+            cp "rustdesk-src/target/x86_64-pc-windows-msvc/release/rustdesk.exe" "output/${APP_SAFE}.exe"
+          elif [ -f "rustdesk-src/target/release/rustdesk.exe" ]; then
+            cp "rustdesk-src/target/release/rustdesk.exe" "output/${APP_SAFE}.exe"
+          else
+            echo "Executável não encontrado."
+            exit 1
+          fi
+
           ls -lh output/
 
       - name: Upload artifact
@@ -107,10 +136,10 @@ jobs:
 
       - name: Create Release
         if: success()
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
-          name: "Build #${{ github.run_number }} - ${{ github.event.inputs.app_name }}"
+          name: Build #${{ github.run_number }} - ${{ github.event.inputs.app_name }}
           body: |
             ## Cliente RustDesk Personalizado
 
