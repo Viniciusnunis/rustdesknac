@@ -30,24 +30,34 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
 
-      - name: Setup vcpkg
-        uses: lukka/run-vcpkg@v11
-        with:
-          # SHA completo, obrigatório
-          vcpkgGitCommitId: "89d9955631e018df4a7cfce8b01c9954d658a1d8"
+      - name: Clone vcpkg
+        shell: bash
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git vcpkg
+          cd vcpkg
+          git checkout master
+
+      - name: Bootstrap vcpkg
+        shell: pwsh
+        run: |
+          .\vcpkg\bootstrap-vcpkg.bat
+
+      - name: Set VCPKG_ROOT
+        shell: pwsh
+        run: |
+          echo "VCPKG_ROOT=${{ github.workspace }}\vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "${{ github.workspace }}\vcpkg" | Out-File -FilePath $env:GITHUB_PATH -Append
 
       - name: Install dependencies via vcpkg
         shell: pwsh
         run: |
-          vcpkg install `
+          .\vcpkg\vcpkg.exe install `
             libvpx:x64-windows-static `
             libyuv:x64-windows-static `
             opus:x64-windows-static `
@@ -73,23 +83,18 @@ jobs:
           echo "Servidor: $SERVER"
           echo "Cor: $COLOR"
 
-          # Ajuste de servidor padrão
           if [ -f "libs/hbb_common/src/config.rs" ]; then
             sed -i "s|rs-ny.rustdesk.com|$SERVER|g" libs/hbb_common/src/config.rs || true
             sed -i "s|rs-sg.rustdesk.com|$SERVER|g" libs/hbb_common/src/config.rs || true
             sed -i "s|rs-cn.rustdesk.com|$SERVER|g" libs/hbb_common/src/config.rs || true
             echo "Servidor configurado ✓"
-          else
-            echo "Arquivo de configuração não encontrado."
           fi
 
-          # Logo customizada
           if [ -f "../assets/logo.png" ]; then
             cp "../assets/logo.png" res/icon.png || true
             echo "Logo aplicada ✓"
           fi
 
-          # Ícone customizado
           if [ -f "../assets/icon.ico" ]; then
             cp "../assets/icon.ico" res/icon.ico || true
             echo "Ícone aplicado ✓"
@@ -99,20 +104,18 @@ jobs:
 
       - name: Build RustDesk for Windows
         shell: bash
+        env:
+          VCPKG_ROOT: ${{ env.VCPKG_ROOT }}
         run: |
           set -e
           cd rustdesk-src
-
           echo "VCPKG_ROOT=$VCPKG_ROOT"
-          export VCPKG_ROOT="$VCPKG_ROOT"
-
           cargo build --release --target x86_64-pc-windows-msvc
 
       - name: Prepare output
         shell: bash
         run: |
           set -e
-
           APP_SAFE=$(echo "${{ github.event.inputs.app_name }}" | tr '[:upper:]' '[:lower:]' | tr ' ' '_' | tr -cd 'a-z0-9_-')
           mkdir -p output
 
