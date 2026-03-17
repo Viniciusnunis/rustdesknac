@@ -1,0 +1,6 @@
+Coloque aqui os arquivos de personalização:
+
+- logo.png  → Logo da empresa (256x256 px, PNG)
+- icon.ico  → Ícone do Windows (pode ser gerado a partir da logo.png)
+
+Dica: Para converter logo.png em icon.ico, use https://convertio.co/png-ico/

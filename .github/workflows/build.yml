@@ -1,0 +1,124 @@
+name: Build Custom RustDesk Client
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_name:
+        description: 'Nome do aplicativo'
+        required: true
+        default: 'Nacional Automacao Remote'
+      server:
+        description: 'IP ou domínio do servidor'
+        required: true
+        default: '72.60.254.113'
+      color_primary:
+        description: 'Cor principal (hex)'
+        required: false
+        default: '#ee3520'
+
+jobs:
+  build-windows:
+    runs-on: windows-2019
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: 'a42af01b72c28a8e1d7b48107b33e4f286a55ef6'
+
+      - name: Install dependencies via vcpkg
+        run: |
+          vcpkg install libvpx:x64-windows-static libyuv:x64-windows-static opus:x64-windows-static aom:x64-windows-static
+        env:
+          VCPKG_DEFAULT_TRIPLET: x64-windows-static
+
+      - name: Clone RustDesk source
+        run: |
+          git clone --depth 1 --branch 1.2.7 https://github.com/rustdesk/rustdesk.git rustdesk-src
+        shell: bash
+
+      - name: Apply customizations
+        shell: bash
+        run: |
+          cd rustdesk-src
+
+          APP_NAME="${{ github.event.inputs.app_name }}"
+          SERVER="${{ github.event.inputs.server }}"
+          COLOR="${{ github.event.inputs.color_primary }}"
+
+          echo "Aplicando personalizações..."
+          echo "Nome: $APP_NAME"
+          echo "Servidor: $SERVER"
+
+          # Configurar servidor padrão
+          if [ -f "libs/hbb_common/src/config.rs" ]; then
+            sed -i "s|\"rs-ny.rustdesk.com\"|\"$SERVER\"|g" libs/hbb_common/src/config.rs
+            sed -i "s|\"rs-sg.rustdesk.com\"|\"$SERVER\"|g" libs/hbb_common/src/config.rs
+            sed -i "s|\"rs-cn.rustdesk.com\"|\"$SERVER\"|g" libs/hbb_common/src/config.rs
+            echo "Servidor configurado ✓"
+          fi
+
+          # Aplicar logo customizada se existir
+          if [ -f "../assets/logo.png" ]; then
+            cp "../assets/logo.png" res/icon.png 2>/dev/null || true
+            echo "Logo aplicada ✓"
+          fi
+
+          # Aplicar ícone customizado se existir
+          if [ -f "../assets/icon.ico" ]; then
+            cp "../assets/icon.ico" res/icon.ico 2>/dev/null || true
+            echo "Ícone aplicado ✓"
+          fi
+
+          echo "Personalização concluída!"
+
+      - name: Build RustDesk for Windows
+        shell: bash
+        run: |
+          cd rustdesk-src
+          export VCPKG_ROOT="${VCPKG_ROOT}"
+          cargo build --release --target x86_64-pc-windows-msvc 2>&1
+        env:
+          VCPKG_ROOT: ${{ env.VCPKG_ROOT }}
+
+      - name: Rename output
+        shell: bash
+        run: |
+          APP_SAFE=$(echo "${{ github.event.inputs.app_name }}" | tr ' ' '_' | tr '[:upper:]' '[:lower:]')
+          mkdir -p output
+          cp rustdesk-src/target/x86_64-pc-windows-msvc/release/rustdesk.exe "output/${APP_SAFE}_setup.exe" 2>/dev/null || \
+          cp rustdesk-src/target/release/rustdesk.exe "output/${APP_SAFE}_setup.exe" 2>/dev/null || true
+          ls -lh output/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustdesk-custom-windows
+          path: output/*.exe
+          retention-days: 30
+
+      - name: Create Release
+        if: success()
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: "Build #${{ github.run_number }} - ${{ github.event.inputs.app_name }}"
+          body: |
+            ## Cliente RustDesk Personalizado
+
+            - **App:** ${{ github.event.inputs.app_name }}
+            - **Servidor:** ${{ github.event.inputs.server }}
+            - **Build:** #${{ github.run_number }}
+
+            Baixe o `.exe` abaixo e distribua para seus clientes.
+          files: output/*.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
